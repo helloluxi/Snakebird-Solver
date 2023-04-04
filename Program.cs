@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using int2 = System.ValueTuple<int, int>;
 using int2s = System.Collections.Generic.List<System.ValueTuple<int, int>>;
-using number = System.UInt128;
+using number = System.UInt64;
 
 
 public class LevelReader {
@@ -30,6 +30,7 @@ public class LevelReader {
     public int frameMultiplier { get; set; }
     public int stepMultiplier { get; set; }
     public int targetMultiplier { get; set; }
+    public int birdFrameMultiplier { get; set; }
     public int allFruitAndFrameBonus { get; set; }
 }
 
@@ -166,6 +167,11 @@ class Program {
                 ));
             }
         }
+
+        // Overflow check
+        int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
+        for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
+        if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
     
         // Solve the level
         var solver = new Solver{
@@ -175,6 +181,7 @@ class Program {
             frameMultiplier = levelReader.frameMultiplier,
             stepMultiplier = levelReader.stepMultiplier,
             targetMultiplier = levelReader.targetMultiplier,
+            birdFrameMultiplier = levelReader.birdFrameMultiplier,
             allFruitAndFrameBonus = levelReader.allFruitAndFrameBonus,
         };
         if(levelReader.frameHeuristics.Count == level.frameCount * 2){
@@ -191,7 +198,7 @@ public class Solver{
     public LevelStatic level;
     public int2[] frameHeuristics;
     public int fruitMultiplier, frameMultiplier, stepMultiplier,
-        allFruitAndFrameBonus, targetMultiplier;
+        allFruitAndFrameBonus, targetMultiplier, birdFrameMultiplier;
     private number initStateCache;
     private Dictionary<number, number> route; // Key: State, Value: Parent State << 4 | BirdIdx << 2 | Direction
     private PriorityQueue<LevelState, int> queue;
@@ -199,46 +206,60 @@ public class Solver{
     private static int Distance(int2 a, int2 b){
         return Math.Abs(a.Item1 - b.Item1) + Math.Abs(a.Item2 - b.Item2);
     }
+    private static int NonSymmetricDistance(int2 a, int2 b){
+        return Math.Abs(a.Item1 - b.Item1) + 2 * Math.Max(b.Item2 - a.Item2, 0);
+    }
     private int Hueristic(LevelState state){
-        int h = state.step * stepMultiplier;
-        bool useBouns = true;
-        for (int fruitIdx = 0; fruitIdx < level.fruitCount; fruitIdx++)
-        {
-            if (((state.fruitFresh >> fruitIdx) & 1) == 1)
+        int fruitCost = 0;
+        if(fruitMultiplier != 0){
+            for (int fruitIdx = 0; fruitIdx < level.fruitCount; fruitIdx++)
             {
-                int minDist = int.MaxValue;
-                for (int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
+                if (((state.fruitFresh >> fruitIdx) & 1) == 1)
                 {
-                    if (state.objects[birdIdx] == null) continue;
-                    int dist = Distance(state.objects[birdIdx][0], level.fruitPos[fruitIdx]);
-                    if (minDist > dist) minDist = dist;
+                    int minDist = int.MaxValue;
+                    for (int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
+                    {
+                        if (state.objects[birdIdx] == null) continue;
+                        int dist = NonSymmetricDistance(state.objects[birdIdx][0], level.fruitPos[fruitIdx]);
+                        if (minDist > dist) minDist = dist;
+                    }
+                    fruitCost += minDist;
                 }
-                h += minDist * fruitMultiplier;
-                useBouns = false;
             }
         }
-        if(frameHeuristics != null){
+        
+        int frameTargetCost = 0;
+        if(frameHeuristics != null && frameMultiplier != 0){
             for(int frameIdx = 0; frameIdx < level.frameCount; frameIdx++){
-                int dist = Distance(state.objects[level.birdCount + frameIdx][0], frameHeuristics[frameIdx]);
-                h += dist * frameMultiplier;
-                if(dist != 0)
-                    useBouns = false;
+                frameTargetCost += NonSymmetricDistance(state.objects[level.birdCount + frameIdx][0], frameHeuristics[frameIdx]);
             }
         }
 
-        if (useBouns || allFruitAndFrameBonus == 0)
+        int birdTargetCost = 0;
+        if (fruitCost == 0 && frameTargetCost == 0 || allFruitAndFrameBonus == 0)
         {
             for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
                 if (state.objects[birdIdx] == null) continue;
-                h += Distance(state.objects[birdIdx][0], level.target) * targetMultiplier;
+                birdTargetCost += NonSymmetricDistance(state.objects[birdIdx][0], level.target) * targetMultiplier;
             }
         }
-        else
-        {
-            h += allFruitAndFrameBonus;
+        else birdTargetCost = allFruitAndFrameBonus;
+
+        int birdFrameCost = 0;
+        if (birdFrameMultiplier != 0){
+            for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
+                if (state.objects[birdIdx] == null) continue;
+                birdFrameCost += Enumerable.Range(0, level.frameCount).Select(frameIdx =>
+                    state.objects[level.birdCount + frameIdx]).Where(ls => ls != null).Min(ls =>
+                        NonSymmetricDistance(state.objects[birdIdx][0], ls[0]));
+            }
         }
 
-        return h;
+        return state.step * stepMultiplier + 
+            fruitCost * fruitMultiplier +
+            birdFrameCost * birdFrameMultiplier + 
+            frameTargetCost * frameMultiplier + 
+            birdTargetCost;
     }
     private static int2 Move(int2 pos, int dir){
         return (pos.Item1 + (dir == 0 ? 1 : dir == 1 ? -1 : 0), pos.Item2 + (dir == 2 ? 1 : dir == 3 ? -1 : 0));
@@ -435,12 +456,13 @@ public class Solver{
                         Array.Fill(activeList, true);
                     }
 
-                    // Custom prunning
-                    for(int objIdx = level.birdCount; objIdx < level.birdCount; objIdx++){
-                        if(newState.objects[objIdx][0].Item2 == 2)
-                            goto ILLEGAL_MOVE;
+                    // Reduce memory cost
+                    for(int objIdx = 0; objIdx < newState.objects.Length; objIdx++){
+                        if (newState.objects[objIdx] != null && Enumerable.SequenceEqual(newState.objects[objIdx], oldState.objects[objIdx])){
+                            newState.objects[objIdx] = oldState.objects[objIdx];
+                        }
                     }
-
+                    
                     // Check if the level is solved
                     if (Enumerable.Range(0, level.birdCount).All(idx => newState.objects[idx] == null)){
                         // print solution
@@ -468,7 +490,7 @@ public class Solver{
                             sb.Append($"{DIRECTIONS[solDir]}");
                         }
                         Console.WriteLine(sb.ToString());
-                        Console.WriteLine($"({route.Count} elements searched)");
+                        Console.WriteLine($"({route.Count} nodes searched)");
                         return;
                     }
                     else{
@@ -477,6 +499,11 @@ public class Solver{
                         if(!route.ContainsKey(serializedState)){
                             route.Add(serializedState, oldState.Serialize(level) << 4 | (number)(idx << 2 | dir));
                             queue.Enqueue(newState, Hueristic(newState));
+                            
+#if CheckIntermediate
+                            if(route.Count % 100000 == 0)
+                                Console.WriteLine(PrintMap(map)+$"Searched={route.Count}\nPending={queue.Count}\nHeuristic={Hueristic(newState)}");
+#endif
                         }
 #if DebugInfo
                         Console.WriteLine(serializedState.ToString("x"));
@@ -487,10 +514,6 @@ public class Solver{
                     }
 
                 ILLEGAL_MOVE:;
-#if DebugInfo
-                    Console.WriteLine("ILLEGAL_MOVE");
-                    Console.WriteLine();
-#endif
                 }
             }
         }
@@ -505,13 +528,13 @@ public class Solver{
         {
             for (int j = 0; j < level.width; j++)
             {
-                sb.Append(level.target.Item1 == j && level.target.Item2 == i ? '*' : (map[j, i] switch
+                sb.Append(level.target.Item1 == j && level.target.Item2 == i ? 'O' : (map[j, i] switch
                 {
-                    LevelStatic.WALL => 'W',
+                    LevelStatic.WALL => '#',
                     LevelStatic.SPIKE => 'X',
                     >= LevelStatic.OBJECT_BASE => (char)('1' + map[j, i] - LevelStatic.OBJECT_BASE),
                     >= LevelStatic.FRUIT_BASE and < LevelStatic.OBJECT_BASE => (char)('a' + map[j, i] - LevelStatic.FRUIT_BASE),
-                    _ => 'O'
+                    _ => '_'
                 }));
                 sb.Append(' ');
             }
