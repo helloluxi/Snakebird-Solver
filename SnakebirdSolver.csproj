@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Configuration>Release</Configuration>
-    <NoWarn>8618;8602;8619;8625;0675</NoWarn>
+    <NoWarn>8618;8602;8619;8625;0675;8981</NoWarn>
     <!-- <DefineConstants>DebugInfo</DefineConstants> -->
   </PropertyGroup>
 

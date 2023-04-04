@@ -1,37 +1,31 @@
 {
-    "stepMultiplier": 0,
-    "targetMultiplier": 1,
-    "allFruitAndFrameBonus": 0,
+    "stepMultiplier": 1,
+    "targetMultiplier": 2,
+    "allFruitAndFrameBonus": 100,
     "fruitMultiplier": 0,
-    "frameMultiplier": 0,
-    "frameHeuristics":[],
+    "frameMultiplier": 10,
+    "frameHeuristics": [0,1,-3,3,0,5],
 
     "range":[
-        -9, 13, -11, 5
+        -6, 6, -2, 10
     ],
     "target":[
-        -6, -1
+        0, 8
     ],
     "birds":[
-        [7, -6, 0, 0],
-        [7, -3, 0, 0, 3],
-        [7, -7, 0, 0, 0]
+        [3, 0, 1, 1],
+        [-3, 0, 0, 0]
     ],
     "frames":[
-        [8, -8, 0, 4]
+        [-2, 1, 4, 0],
+        [-2, 2, 4, 0],
+        [-2, 3, 4, 0]
     ],
     "walls":[
-        9999, 7, 11, -10, -9,
-        11, -3,
-        12, -6,
-        9999, 0, 0, 0, 3,
-        9999, -8, -5, -6, -5,
-        9999, -7, -6, -7, -4,
-        -5, -4
+        9999, -4, 4, -1, -1
     ],
     "spikes":[
-        1, 3, 2, 3, 3, 3, 4, 3,
-        2, 0, 3, 0, 4, 0, 5, 0, 5, -1
+        0, 0, 1, 2, 0, 4
     ],
     "fruits":[
         

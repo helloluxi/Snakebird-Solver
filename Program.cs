@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using int2 = System.ValueTuple<int, int>;
 using int2s = System.Collections.Generic.List<System.ValueTuple<int, int>>;
+using number = System.UInt128;
 
 
 public class LevelReader {
@@ -33,7 +34,7 @@ public class LevelReader {
 }
 
 public class LevelStatic {
-    public const int EMPTY = 0, WALL = 1, SPIKE = 2, FRUIT_BASE = 3, OBJECT_BASE = 20;
+    public const int EMPTY = 0, WALL = 1, SPIKE = 2, FRUIT_BASE = 3, OBJECT_BASE = 30;
     public int[,] initMap;
     public int2[] fruitPos;
     public int2 target, portal1, portal2;
@@ -46,16 +47,16 @@ public class LevelState {
     public int2s[] objects;
     public uint fruitFresh;
     public int step;
-    public ulong Serialize(LevelStatic level){
-        ulong s = (ulong)fruitFresh;
+    public number Serialize(LevelStatic level){
+        number s = (number)fruitFresh;
         int idx = level.fruitCount;
         for(int frameObjIdx = level.birdCount; frameObjIdx < objects.Length; frameObjIdx++){
             if (objects[frameObjIdx] == null) {
-                s |= ((1UL << level.posBit) - 1) << idx;
+                s |= (((number)1 << level.posBit) - 1) << idx;
             }
             else {
                 int2 framePos = objects[frameObjIdx][0];
-                s |= (ulong)(framePos.Item1 + framePos.Item2 * level.width) << idx;
+                s |= (number)(framePos.Item1 + framePos.Item2 * level.width) << idx;
             }
             idx += level.posBit;
         }
@@ -63,25 +64,25 @@ public class LevelState {
         {
             if (objects[birdIdx] == null)
             {
-                s |= ((1UL << level.posBit) - 1) << idx;
+                s |= (((number)1 << level.posBit) - 1) << idx;
                 idx += level.posBit;
             }
             else
             {
                 // The first `posBit` bits are the position of the bird
-                s |= (ulong)(objects[birdIdx][0].Item1 + objects[birdIdx][0].Item2 * level.width) << idx;
+                s |= (number)(objects[birdIdx][0].Item1 + objects[birdIdx][0].Item2 * level.width) << idx;
                 idx += level.posBit;
                 // Every 2 bits in the middle are the directions of the bird
                 for (int dirIdx = 1; dirIdx < objects[birdIdx].Count; dirIdx++)
                 {
                     s |= (objects[birdIdx][dirIdx].Item1 == objects[birdIdx][dirIdx - 1].Item1 ?
                         (objects[birdIdx][dirIdx].Item2 < objects[birdIdx][dirIdx - 1].Item2 ? 2UL : 3UL) :
-                        (objects[birdIdx][dirIdx].Item1 < objects[birdIdx][dirIdx - 1].Item1 ? 0UL : 1UL)
+                        (objects[birdIdx][dirIdx].Item1 < objects[birdIdx][dirIdx - 1].Item1 ? 0UL : (number)1)
                     ) << idx;
                     idx += 2;
                 }
                 // Inversed 2 bits denotes the end of the bird
-                s |= ((s >> idx) ^ 1UL) << idx;
+                s |= ((s >> idx) ^ (number)1) << idx;
                 idx += 2;
             }
         }
@@ -165,11 +166,6 @@ class Program {
                 ));
             }
         }
-
-        // Overflow check
-        int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
-        for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
-        if (bitUsed > 60) throw new Exception("Too many bits used");
     
         // Solve the level
         var solver = new Solver{
@@ -196,8 +192,8 @@ public class Solver{
     public int2[] frameHeuristics;
     public int fruitMultiplier, frameMultiplier, stepMultiplier,
         allFruitAndFrameBonus, targetMultiplier;
-    private ulong initStateCache;
-    private Dictionary<ulong, ulong> route; // Key: State, Value: Parent State << 4 | BirdIdx << 2 | Direction
+    private number initStateCache;
+    private Dictionary<number, number> route; // Key: State, Value: Parent State << 4 | BirdIdx << 2 | Direction
     private PriorityQueue<LevelState, int> queue;
     private const string DIRECTIONS = "RLUD";
     private static int Distance(int2 a, int2 b){
@@ -291,7 +287,8 @@ public class Solver{
             var nextPos = Move(pos, dir);
             if (map[nextPos.Item1, nextPos.Item2] >= LevelStatic.OBJECT_BASE ?
                 !RecursiveTest(map, state, map[nextPos.Item1, nextPos.Item2] - LevelStatic.OBJECT_BASE, dir, moveList) :
-                map[nextPos.Item1, nextPos.Item2] is not (LevelStatic.EMPTY or LevelStatic.SPIKE))
+                map[nextPos.Item1, nextPos.Item2] is >= LevelStatic.FRUIT_BASE or LevelStatic.WALL ||
+                map[nextPos.Item1, nextPos.Item2] == LevelStatic.SPIKE && idx >= level.birdCount)
             {
                 return false;
             }
@@ -366,7 +363,7 @@ public class Solver{
 
     public void Solve(LevelState initState){
         initStateCache = initState.Serialize(level);
-        route = new Dictionary<ulong, ulong>();
+        route = new Dictionary<number, number>();
         queue = new PriorityQueue<LevelState, int>();
         queue.Enqueue(initState, Hueristic(initState));
         int[,] map = new int[level.width, level.height];
@@ -438,6 +435,11 @@ public class Solver{
                         Array.Fill(activeList, true);
                     }
 
+                    // Custom prunning
+                    for(int objIdx = level.birdCount; objIdx < level.birdCount; objIdx++){
+                        if(newState.objects[objIdx][0].Item2 == 2)
+                            goto ILLEGAL_MOVE;
+                    }
 
                     // Check if the level is solved
                     if (Enumerable.Range(0, level.birdCount).All(idx => newState.objects[idx] == null)){
@@ -445,9 +447,9 @@ public class Solver{
                         Console.WriteLine();
                         var ls = new Stack<int2>();
                         ls.Push((idx, dir));
-                        ulong key = oldState.Serialize(level);
+                        number key = oldState.Serialize(level);
                         while(initStateCache != key){
-                            ulong value = route[key];
+                            number value = route[key];
                             ls.Push(((int)((value >> 2) & 3), (int)(value & 3)));
                             key = value >> 4;
 #if DebugInfo
@@ -473,7 +475,7 @@ public class Solver{
                         // save to queue
                         var serializedState = newState.Serialize(level);
                         if(!route.ContainsKey(serializedState)){
-                            route.Add(serializedState, oldState.Serialize(level) << 4 | (ulong)(idx << 2 | dir));
+                            route.Add(serializedState, oldState.Serialize(level) << 4 | (number)(idx << 2 | dir));
                             queue.Enqueue(newState, Hueristic(newState));
                         }
 #if DebugInfo
