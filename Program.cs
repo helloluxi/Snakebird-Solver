@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using int2 = System.ValueTuple<int, int>;
 using int2s = System.Collections.Generic.List<System.ValueTuple<int, int>>;
-using number = System.UInt64;
+using number = System.UInt128;
 
 
 public class LevelReader {
@@ -168,10 +168,10 @@ class Program {
             }
         }
 
-        // Overflow check
-        int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
-        for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
-        if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
+        // // Overflow check
+        // int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
+        // for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
+        // if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
     
         // Solve the level
         var solver = new Solver{
@@ -210,6 +210,8 @@ public class Solver{
         return Math.Abs(a.Item1 - b.Item1) + 2 * Math.Max(b.Item2 - a.Item2, 0);
     }
     private int Hueristic(LevelState state){
+        int h = state.step * stepMultiplier;
+
         int fruitCost = 0;
         if(fruitMultiplier != 0){
             for (int fruitIdx = 0; fruitIdx < level.fruitCount; fruitIdx++)
@@ -226,13 +228,15 @@ public class Solver{
                     fruitCost += minDist;
                 }
             }
+            h += fruitCost * fruitMultiplier;
         }
         
         int frameTargetCost = 0;
         if(frameHeuristics != null && frameMultiplier != 0){
             for(int frameIdx = 0; frameIdx < level.frameCount; frameIdx++){
-                frameTargetCost += NonSymmetricDistance(state.objects[level.birdCount + frameIdx][0], frameHeuristics[frameIdx]);
+                frameTargetCost += Distance(state.objects[level.birdCount + frameIdx][0], frameHeuristics[frameIdx]);
             }
+            h += frameTargetCost * frameMultiplier;
         }
 
         int birdTargetCost = 0;
@@ -242,24 +246,22 @@ public class Solver{
                 if (state.objects[birdIdx] == null) continue;
                 birdTargetCost += NonSymmetricDistance(state.objects[birdIdx][0], level.target) * targetMultiplier;
             }
+            h += birdTargetCost * targetMultiplier;
         }
-        else birdTargetCost = allFruitAndFrameBonus;
+        else h += allFruitAndFrameBonus;
 
         int birdFrameCost = 0;
-        if (birdFrameMultiplier != 0){
+        if (birdFrameMultiplier != 0 && frameTargetCost != 0){
             for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
                 if (state.objects[birdIdx] == null) continue;
                 birdFrameCost += Enumerable.Range(0, level.frameCount).Select(frameIdx =>
                     state.objects[level.birdCount + frameIdx]).Where(ls => ls != null).Min(ls =>
                         NonSymmetricDistance(state.objects[birdIdx][0], ls[0]));
             }
+            h += birdFrameCost * birdFrameMultiplier;
         }
 
-        return state.step * stepMultiplier + 
-            fruitCost * fruitMultiplier +
-            birdFrameCost * birdFrameMultiplier + 
-            frameTargetCost * frameMultiplier + 
-            birdTargetCost;
+        return h;
     }
     private static int2 Move(int2 pos, int dir){
         return (pos.Item1 + (dir == 0 ? 1 : dir == 1 ? -1 : 0), pos.Item2 + (dir == 2 ? 1 : dir == 3 ? -1 : 0));
