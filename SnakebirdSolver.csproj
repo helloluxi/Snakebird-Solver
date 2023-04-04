@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Configuration>Release</Configuration>
+    <NoWarn>8618;8602;8619;8625;0675</NoWarn>
+    <!-- <DefineConstants>DebugInfo</DefineConstants> -->
+  </PropertyGroup>
+
+</Project>
