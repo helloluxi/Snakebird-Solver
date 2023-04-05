@@ -1,12 +1,14 @@
 {
-    "stepMultiplier": 1,
-    "targetMultiplier": 2,
-    "fruitMultiplier": 10,
-    "frameMultiplier": 5,
-    "frameHeuristics": [3, -4],
-    "birdFrameMultiplier": 5,
-    "allFruitAndFrameBonus": 1000,
-
+    "hueristic":{
+        "useNonSymDistance": false,
+        "stepWeight": 3,
+        "birdToTargWeight": 4,
+        "birdFollowingFrameWeight": 5,
+        "fruitMinDistToBirdWeight": 20,
+        "frameToHeuTargWeight": 10,
+        "frameTargets": [3, -4],
+        "extraPreparingCost": 1000
+    },
     "range":[
         -8, 6, -6, 5
     ],
