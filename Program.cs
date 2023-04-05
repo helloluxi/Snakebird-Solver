@@ -275,7 +275,7 @@ public class Solver{
                     for (int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
                     {
                         if (state.objects[birdIdx] == null) continue;
-                        int dist = NonSymmetricDistance(state.objects[birdIdx][0], level.fruitPos[fruitIdx]);
+                        int dist = Distance(state.objects[birdIdx][0], level.fruitPos[fruitIdx]);
                         if (minDist > dist) minDist = dist;
                     }
                     fruitCost += minDist;
@@ -297,7 +297,7 @@ public class Solver{
         {
             for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
                 if (state.objects[birdIdx] == null) continue;
-                birdTargetCost += NonSymmetricDistance(state.objects[birdIdx][0], level.target) * targetMultiplier;
+                birdTargetCost += Distance(state.objects[birdIdx][0], level.target) * targetMultiplier;
             }
             h += birdTargetCost * targetMultiplier;
         }
@@ -309,7 +309,7 @@ public class Solver{
                 if (state.objects[birdIdx] == null) continue;
                 birdFrameCost += Enumerable.Range(0, level.frameCount).Select(frameIdx =>
                     state.objects[level.birdCount + frameIdx]).Where(ls => ls != null).Min(ls =>
-                        NonSymmetricDistance(state.objects[birdIdx][0], ls[0]));
+                        Distance(state.objects[birdIdx][0], ls[0]));
             }
             h += birdFrameCost * birdFrameMultiplier;
         }
