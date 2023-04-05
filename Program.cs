@@ -7,8 +7,12 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using int2 = System.ValueTuple<int, int>;
 using int2s = System.Collections.Generic.List<System.ValueTuple<int, int>>;
-using number = System.UInt128;
 
+#if Use128Bit
+using number = System.UInt128;
+#else
+using number = System.UInt64;
+#endif
 
 public class LevelReader {
     // The first 2 ints define the head position, the followings define directions
@@ -37,8 +41,8 @@ public class LevelReader {
 public class LevelStatic {
     public const int EMPTY = 0, WALL = 1, SPIKE = 2, FRUIT_BASE = 3, OBJECT_BASE = 30;
     public int[,] initMap;
-    public int2[] fruitPos;
-    public int2 target, portal1, portal2;
+    public int2[] fruitPos, portalPos;
+    public int2 target;
     public int width, height, posBit;
     public int birdCount, frameCount;
     public int fruitCount => fruitPos.Length;
@@ -76,18 +80,63 @@ public class LevelState {
                 // Every 2 bits in the middle are the directions of the bird
                 for (int dirIdx = 1; dirIdx < objects[birdIdx].Count; dirIdx++)
                 {
-                    s |= (objects[birdIdx][dirIdx].Item1 == objects[birdIdx][dirIdx - 1].Item1 ?
-                        (objects[birdIdx][dirIdx].Item2 < objects[birdIdx][dirIdx - 1].Item2 ? 2UL : 3UL) :
-                        (objects[birdIdx][dirIdx].Item1 < objects[birdIdx][dirIdx - 1].Item1 ? 0UL : (number)1)
+                    int2 thisPos = objects[birdIdx][dirIdx], lastPos = objects[birdIdx][dirIdx - 1];
+                    s |= (number)(lastPos.Item1 > thisPos.Item1 ? 0 :
+                        lastPos.Item1 < thisPos.Item1 ? 1 :
+                        lastPos.Item2 > thisPos.Item2 ? 2 : 3
                     ) << idx;
                     idx += 2;
                 }
-                // Inversed 2 bits denotes the end of the bird
-                s |= ((s >> idx) ^ (number)1) << idx;
+                // Inversed 2 bits denotes the end of the bird, assert the bird length is not 1
+                s |= ((s >> (idx - 2)) ^ (number)1) << idx;
                 idx += 2;
             }
         }
         return s;
+    }
+    public void Deserialize(LevelStatic level, LevelState initState, number key){
+        step = -1;
+        fruitFresh = (uint)key & ((1U << level.fruitCount) - 1);
+
+        int idx = level.fruitCount;
+        for(int frameObjIdx = level.birdCount; frameObjIdx < objects.Length; frameObjIdx++){
+            int head = (int)(key >> idx) & ((1 << level.posBit) - 1);
+            idx += level.posBit;
+            if (head == (1 << level.posBit) - 1) {
+                objects[frameObjIdx] = null;
+            }
+            else {
+                objects[frameObjIdx] = initState.objects[frameObjIdx].Select(pos => (
+                    pos.Item1 - initState.objects[frameObjIdx][0].Item1 + head % level.width,
+                    pos.Item2 - initState.objects[frameObjIdx][0].Item2 + head / level.width)
+                ).ToList();
+            }
+        }
+        for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
+        {
+            int head = (int)(key >> idx) & ((1 << level.posBit) - 1), lastDir = -1;
+            idx += level.posBit;
+            if (head == (1 << level.posBit) - 1) {
+                objects[birdIdx] = null;
+            }
+            else {
+                objects[birdIdx] = new int2s{(
+                    head % level.width,
+                    head / level.width
+                )};
+                while (true)
+                {
+                    int dir = (int)((key >> idx) & 3);
+                    idx += 2;
+                    if (dir == (lastDir ^ 1)) break;
+                    lastDir = dir;
+                    objects[birdIdx].Add((
+                        objects[birdIdx][^1].Item1 + (dir == 0 ? -1 : dir == 1 ? 1 : 0),
+                        objects[birdIdx][^1].Item2 + (dir == 2 ? -1 : dir == 3 ? 1 : 0)
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -132,8 +181,10 @@ class Program {
             level.fruitPos[i] = (levelReader.fruits[i*2] - levelReader.range[0], levelReader.fruits[i*2+1] - levelReader.range[2]);
         }
         if(levelReader.portals.Length == 4){
-            level.portal1 = (levelReader.portals[0] - levelReader.range[0], levelReader.portals[1] - levelReader.range[2]);
-            level.portal2 = (levelReader.portals[2] - levelReader.range[0], levelReader.portals[3] - levelReader.range[2]);
+            level.portalPos = new int2[]{
+                (levelReader.portals[0] - levelReader.range[0], levelReader.portals[1] - levelReader.range[2]),
+                (levelReader.portals[2] - levelReader.range[0], levelReader.portals[3] - levelReader.range[2])
+            };
         }
 
         // Read the initial state
@@ -168,10 +219,12 @@ class Program {
             }
         }
 
-        // // Overflow check
-        // int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
-        // for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
-        // if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
+#if !Use128Bit
+        // Overflow check
+        int bitUsed = level.posBit * (level.birdCount + level.frameCount) + level.fruitCount;
+        for (int i = 0; i < level.birdCount; i++) bitUsed += state.objects[i].Count * 2;
+        if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
+#endif
     
         // Solve the level
         var solver = new Solver{
@@ -338,6 +391,10 @@ public class Solver{
                 map[state.objects[idx][^1].Item1, state.objects[idx][^1].Item2] = LevelStatic.EMPTY;
                 state.objects[idx].RemoveAt(state.objects[idx].Count - 1);
             }
+            // Test Portal
+            if (level.portalPos != null && level.portalPos.Contains(state.objects[idx][0])){
+                ApplyPortal(map, state, idx, state.objects[idx][0]);
+            }
             // If the bird reaches target, remove it
             if (state.fruitFresh == 0 && state.objects[idx][0] == level.target)
             {
@@ -371,6 +428,13 @@ public class Solver{
                         map[state.objects[objIdx][objPartIdx].Item1, state.objects[objIdx][objPartIdx].Item2] == LevelStatic.SPIKE)
                         return false;
                 }
+                // Test Portal
+                if(level.portalPos != null && state.objects[objIdx] != null){
+                    var portal = state.objects[objIdx].FirstOrDefault(pos => pos == level.portalPos[0] || pos == level.portalPos[1]);
+                    if(portal != default && !state.objects[objIdx].Contains(Move(portal, dir))){
+                        ApplyPortal(map, state, objIdx, portal);
+                    }
+                }
             }
         }
         // Update map
@@ -382,6 +446,38 @@ public class Solver{
             }
         }
         return true;
+    }
+    private void ApplyPortal(int[,] map, LevelState state, int idx, int2 portal){
+        // Test if the other portal is blocked
+        int portalFlag = portal == level.portalPos[0] ? 0 : 1;
+        int deltaX = level.portalPos[portalFlag ^ 1].Item1 - level.portalPos[portalFlag].Item1,
+            deltaY = level.portalPos[portalFlag ^ 1].Item2 - level.portalPos[portalFlag].Item2;
+        if (state.objects[idx].All(pos => map[pos.Item1 + deltaX, pos.Item2 + deltaY] == LevelStatic.EMPTY)){
+            for (int partIdx = 0; partIdx < state.objects[idx].Count; partIdx++)
+            {
+                // Remove old object
+                map[state.objects[idx][partIdx].Item1, state.objects[idx][partIdx].Item2] = LevelStatic.EMPTY;
+                // Move to new place
+                state.objects[idx][partIdx] = (
+                    state.objects[idx][partIdx].Item1 + deltaX, 
+                    state.objects[idx][partIdx].Item2 + deltaY);
+            }
+        }
+    }
+
+    private void CopyStateToMap(int[,] map, LevelState state){
+        Array.Copy(level.initMap, map, level.initMap.Length);
+        for(int objIdx = 0; objIdx < state.objects.Length; objIdx++){
+            if (state.objects[objIdx] == null) continue;
+            foreach (var pos in state.objects[objIdx]){
+                map[pos.Item1, pos.Item2] = LevelStatic.OBJECT_BASE + objIdx;
+            }
+        }
+        for(int fruitIdx = 0; fruitIdx < level.fruitCount; fruitIdx++){
+            if(((state.fruitFresh >> fruitIdx) & 1) == 1){
+                map[level.fruitPos[fruitIdx].Item1, level.fruitPos[fruitIdx].Item2] = LevelStatic.FRUIT_BASE + fruitIdx;
+            }
+        }
     }
 
     public void Solve(LevelState initState){
@@ -399,6 +495,7 @@ public class Solver{
                 if (oldState.objects[idx] == null) continue;
                 for (int dir = 0; dir < 4; dir++){
                     int2 nextPos = Move(oldState.objects[idx][0], dir);
+                    // Pre-test illegal move
                     if(nextPos.Item1 < 0 || nextPos.Item1 >= level.width ||
                         nextPos.Item2 < 0 || nextPos.Item2 >= level.height ||
                         level.initMap[nextPos.Item1, nextPos.Item2] is LevelStatic.WALL or LevelStatic.SPIKE ||
@@ -407,18 +504,7 @@ public class Solver{
                     }
 
                     // Copy map and fill in object positions
-                    Array.Copy(level.initMap, map, level.initMap.Length);
-                    for(int objIdx = 0; objIdx < oldState.objects.Length; objIdx++){
-                        if (oldState.objects[objIdx] == null) continue;
-                        foreach (var pos in oldState.objects[objIdx]){
-                            map[pos.Item1, pos.Item2] = LevelStatic.OBJECT_BASE + objIdx;
-                        }
-                    }
-                    for(int fruitIdx = 0; fruitIdx < level.fruitCount; fruitIdx++){
-                        if(((oldState.fruitFresh >> fruitIdx) & 1) == 1){
-                            map[level.fruitPos[fruitIdx].Item1, level.fruitPos[fruitIdx].Item2] = LevelStatic.FRUIT_BASE + fruitIdx;
-                        }
-                    }
+                    CopyStateToMap(map, oldState);
                     if (!mapPrinted)
                     {
                         mapPrinted = true;
@@ -429,10 +515,6 @@ public class Solver{
                     if (!TestSnakeMove(map, oldState, idx, dir, moveList)){
                         continue;
                     }
-#if DebugInfo
-                    Console.Write(oldState.Serialize(level).ToString("x"));
-                    Console.Write($">>>{idx+1}{DIRECTIONS[dir]}>>>");
-#endif
                     var newState = new LevelState{
                         objects = oldState.objects.Select(x => x == null ? null : x.ToList()).ToArray(),
                         fruitFresh = oldState.fruitFresh,
@@ -471,13 +553,21 @@ public class Solver{
                         Console.WriteLine();
                         var ls = new Stack<int2>();
                         ls.Push((idx, dir));
+#if PrintRoute
+                            System.Console.WriteLine($"\nBefore [{idx+1}{DIRECTIONS[dir]}]:");
+                            CopyStateToMap(map, oldState);
+                            System.Console.WriteLine(PrintMap(map));
+#endif
                         number key = oldState.Serialize(level);
                         while(initStateCache != key){
                             number value = route[key];
                             ls.Push(((int)((value >> 2) & 3), (int)(value & 3)));
                             key = value >> 4;
-#if DebugInfo
-                            Console.WriteLine($"[{(int)((value >> 2) & 3) + 1}{DIRECTIONS[(int)(value & 3)]}]{key:x}");
+#if PrintRoute
+                            System.Console.WriteLine($"\nBefore [{ls.Peek().Item1 + 1}{DIRECTIONS[ls.Peek().Item2]}]:");
+                            newState.Deserialize(level, initState, key);
+                            CopyStateToMap(map, newState);
+                            System.Console.WriteLine(PrintMap(map));
 #endif
                         }
                         Console.Write("Solution = ");
@@ -507,19 +597,12 @@ public class Solver{
                                 Console.WriteLine(PrintMap(map)+$"Searched={route.Count}\nPending={queue.Count}\nHeuristic={Hueristic(newState)}");
 #endif
                         }
-#if DebugInfo
-                        Console.WriteLine(serializedState.ToString("x"));
-                        Console.WriteLine(PrintMap(map));
-                        Console.WriteLine();
-                        continue;
-#endif
                     }
 
                 ILLEGAL_MOVE:;
                 }
             }
         }
-        ;
     }
 
 #region DebugInfo
@@ -530,8 +613,9 @@ public class Solver{
         {
             for (int j = 0; j < level.width; j++)
             {
-                sb.Append(level.target.Item1 == j && level.target.Item2 == i ? 'O' : (map[j, i] switch
-                {
+                sb.Append(level.target.Item1 == j && level.target.Item2 == i ? 'O' :
+                    level.portalPos != null && level.portalPos.Contains((j, i)) ? '@' :
+                    (map[j, i] switch {
                     LevelStatic.WALL => '#',
                     LevelStatic.SPIKE => 'X',
                     >= LevelStatic.OBJECT_BASE => (char)('1' + map[j, i] - LevelStatic.OBJECT_BASE),
