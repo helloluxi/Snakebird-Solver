@@ -38,4 +38,4 @@ In `SnakebirdSolver.csproj`, you can add the following options into `DefineConst
 + `UseBigInt`: Use 128-bit integer instead of 64-bit integer to store a state, which is usually unnecessary, but is necessary for some levels, especially the star levels;
 + `CheckIntermediate`: Print the intermediate states every 100000 searches, which is useful for adjusting the heuristic parameters by observing the search process;
 + `PrintRoute`: Print the route from the initial state to the goal state when finding a solution.
-
++ `UseBirdSymmetry`: Use bird symmetry to reduce the search space, which is conflicted with `PrintRoute` since it uses lossy compression and makes `Deserialize` hard.

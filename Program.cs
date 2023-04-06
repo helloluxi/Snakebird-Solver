@@ -179,6 +179,11 @@ public class Solver{
             }
         }
 
+#if UseBirdSymmetry
+        foreach(var ls in state.birds.Where(bird => bird != null).OrderBy(bird => bird[0]).ThenBy(bird => bird[1])){
+            SerializeBird(ref s, ref idx, ls);
+        }
+#else
         for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
         {
             if (state.birds[birdIdx] == null)
@@ -187,27 +192,29 @@ public class Solver{
                 idx += (level.xBit + level.yBit);
             }
             else
-            {
-                // The first `posBit` bits are the position of the bird
-                s |= (number)state.birds[birdIdx][0] << idx;
-                idx += level.xBit;
-                s |= (number)state.birds[birdIdx][1] << idx;
-                idx += level.yBit;
-                
-                // Every 2 bits in the middle are the directions of the bird
-                foreach(int dir in state.birds[birdIdx].Skip(2)){
-                    s |= (number)dir << idx;
-                    idx += 2;
-                }
-
-                // Inversed 2 bits denotes the end of the bird, assert the bird length is not 1
-                s |= ((s >> (idx - 2)) ^ (number)1) << idx;
-                idx += 2;
-            }
+                SerializeBird(ref s, ref idx, orderedList[birdIdx]);
         }
-        
+#endif
         return s;
     }
+    private void SerializeBird(ref number s, ref int idx, List<int> bird){
+        // The first `posBit` bits are the position of the bird
+        s |= (number)bird[0] << idx;
+        idx += level.xBit;
+        s |= (number)bird[1] << idx;
+        idx += level.yBit;
+        
+        // Every 2 bits in the middle are the directions of the bird
+        foreach(int dir in bird.Skip(2)){
+            s |= (number)dir << idx;
+            idx += 2;
+        }
+
+        // Inversed 2 bits denotes the end of the bird, assert the bird length is not 1
+        s |= ((s >> (idx - 2)) ^ (number)1) << idx;
+        idx += 2;
+    }
+#if !UseBirdSymmetry
     private State Deserialize(number key){
         var state = new State {
             birds = new(),
@@ -246,6 +253,7 @@ public class Solver{
         }
         return state;
     }
+#endif
 #endregion
 
 #region Heuristic
