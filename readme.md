@@ -5,7 +5,7 @@ All the star levels can be solved in seconds ~~if the heuristic parameters are p
 
 ## Requirements
 
-+ .NET 7.0 (As `System.UInt128` is used)
++ .NET 7
 
 ## How to use
 
@@ -35,7 +35,5 @@ This part is quite important and tricky, here I just give some tips:
 
 In `SnakebirdSolver.csproj`, you can add the following options into `DefineConstants`:
 
-+ `UseBigInt`: Use 128-bit integer instead of 64-bit integer to store a state, which is usually unnecessary, but is necessary for some levels, especially the star levels;
++ `UseBigInt`: Use 128-bit integer instead of 64-bit integer to store a state, which is usually unnecessary;
 + `CheckIntermediate`: Print the intermediate states every 100000 searches, which is useful for adjusting the heuristic parameters by observing the search process;
-+ `PrintRoute`: Print the route from the initial state to the goal state when finding a solution.
-+ `UseBirdSymmetry`: Use bird symmetry to reduce the search space, which is conflicted with `PrintRoute` since it uses lossy compression and makes `Deserialize` hard.

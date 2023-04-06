@@ -40,15 +40,17 @@ public class LevelJson {
     public int[] range{ get; set; } // Length = 4
     public int[] portals{ get; set; } // Length = 4 or 0
     public Hueristic hueristic { get; set; }
+    public int shapeKeyLength { get; set; }
 }
 
 public class Level {
     public const int EMPTY = 0, WALL = 1, SPIKE = 2, FRUIT_BASE = 32, OBJECT_BASE = 64;
     public int[,] initMap;
+    public List<ints> birdShapes;
     public List<int2s> frameShapes;
     public int2s fruitPos, portalPos;
     public int2 target;
-    public int width, height, xBit, yBit;
+    public int width, height, posBit;
     public int birdCount;
     public int frameCount => frameShapes.Count;
     public int fruitCount => fruitPos.Count;
@@ -56,17 +58,21 @@ public class Level {
 }
 
 public class State {
-    public List<ints> birds;
+    public class Bird { public int2 pos; public int shapeKey; }
+    public List<Bird> birds;
     public int2s frames;
     public uint fruitFreshFlag;
     public int step;
 }
 
 public static class Tools{
-    public static int2 Head2(this ints description) => (description[0], description[1]);
     public static int2s ReduceBy2(this IList<int> flatArr, int rangeX = 0, int rangeY = 0){
         return Enumerable.Range(0, flatArr.Count / 2).Select(i => (flatArr[i*2] - rangeX, flatArr[i*2+1] - rangeY)).ToList();
     }
+    public static int Get(this int[,] map, int2 pos) => map[pos.Item1, pos.Item2];
+    public static void Set(this int[,] map, int2 pos, int value) => map[pos.Item1, pos.Item2] = value;
+    public static int2 Add(this int2 a, int2 b) => (a.Item1 + b.Item1, a.Item2 + b.Item2);
+    public static int2 Sub(this int2 a, int2 b) => (a.Item1 - b.Item1, a.Item2 - b.Item2);
     public static void WallReader(this int[,] map, int[] range, int written, List<int> description){
         int idx = -1;
         while(idx < description.Count - 1){
@@ -84,23 +90,6 @@ public static class Tools{
             }
         }
     }
-    public static IEnumerable<int2> GetFramePos(this int2 head, int2s shape){
-        foreach (var pos in shape)
-            yield return (head.Item1 + pos.Item1, head.Item2 + pos.Item2);
-    }
-    public static IEnumerable<int2> GetBirdPos(this ints description){
-        int2 head = (description[0], description[1]);
-        yield return head;
-        for(int i = 2; i < description.Count; i++){
-            switch(description[i]){
-                case 0: head.Item1++; break;
-                case 1: head.Item1--; break;
-                case 2: head.Item2++; break;
-                case 3: head.Item2--; break;
-            }
-            yield return head;
-        }
-    }
 }
 
 class Program {
@@ -114,8 +103,8 @@ class Program {
             initMap = initMap,
             width = initMap.GetLength(0),
             height = initMap.GetLength(1),
-            xBit = BitOperations.Log2((uint)initMap.GetLength(0)) + (BitOperations.IsPow2(initMap.Length) ? 0 : 1),
-            yBit = BitOperations.Log2((uint)initMap.GetLength(1)) + (BitOperations.IsPow2(initMap.Length) ? 0 : 1),
+            posBit = BitOperations.Log2((uint)initMap.Length) + 1,
+            birdShapes = levelReader.birds.Select(bird => bird.Skip(2).ToList()).ToList(),
             frameShapes = levelReader.frames.Select(arr => { var newArr = arr.ReduceBy2(); newArr[0] = default; return newArr; }).ToList(),
             fruitPos = levelReader.fruits.ReduceBy2(levelReader.range[0], levelReader.range[2]),
             birdCount = levelReader.birds.Count,
@@ -123,138 +112,61 @@ class Program {
         };
         level.initMap.WallReader(levelReader.range, Level.WALL, levelReader.walls);
         level.initMap.WallReader(levelReader.range, Level.SPIKE, levelReader.spikes);
-        
-        // Read the initial state
-        var state = new State{
-            birds = levelReader.birds.Select(ls =>
-            {
-                ls[0] -= levelReader.range[0];
-                ls[1] -= levelReader.range[2];
-                return ls;
-            }).ToList(),
+
+        // Read the init state
+        var initState = new State{
+            birds = levelReader.birds.Select(ls => new State.Bird{ pos = (ls[0] - levelReader.range[0], ls[1] - levelReader.range[2]) }).ToList(),
             frames = levelReader.frames.Select(ls => (ls[0] - levelReader.range[0], ls[1] - levelReader.range[2])).ToList(),
             fruitFreshFlag = (1U << level.fruitCount) - 1
         };
-
         
-#if !UseBigInt
-        // Overflow check
-        int bitUsed = (level.xBit + level.yBit) * (level.birdCount + level.frameCount) + 
-            level.fruitCount * (1 + 2 * level.birdCount) +
-            state.birds.Sum(obj => obj.Count) * 2;
-        if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
-#endif
-    
         // Solve the level
         var solver = new Solver{
             level = level,
             hueristic = levelReader.hueristic
         };
         solver.hueristic.realFrameTargets = solver.hueristic.frameTargets.ReduceBy2(levelReader.range[0], levelReader.range[2]);
-        solver.Solve(state);
+        if(levelReader.shapeKeyLength != 0)
+            solver.shapeKeyLength = levelReader.shapeKeyLength;
+#if !UseBigInt
+        // Overflow check
+        int bitUsed = (level.posBit + solver.shapeKeyLength) * level.birdCount + 
+            solver.shapeKeyLength * level.frameCount + level.fruitCount;
+        if (bitUsed + 4 >= sizeof(number) * 8) throw new Exception($"Too many bits used: {bitUsed}");
+#endif
+        solver.Solve(initState);
     }
 }
 
 public class Solver{
     public Level level;
     public Hueristic hueristic;
+    public int shapeKeyLength = 6;
     private const string DIRECTIONS = "RLUD";
+    private const int SHAPE_NOT_COMPUTED = -1, SHAPE_ILLEGAL = -2;
+    private readonly List<int[]> birdShapeCache = new ();
+    private readonly List<int[]> shapeKeyMap = new ();
 
-#region Serialize & Deserialize
     private number Serialize(State state){
         // Format: [BirdPos][FramePos][FruitFreshFlag]
         number s = (number)state.fruitFreshFlag;
         int idx = level.fruitCount;
 
         for(int frameObjIdx = 0; frameObjIdx < level.frameCount; frameObjIdx++){
-            if (state.frames[frameObjIdx] == NullPos) {
-                s |= (((number)1 << (level.xBit + level.yBit)) - 1) << idx;
-                idx += (level.xBit + level.yBit);
-            }
-            else {
-                s |= (number)state.frames[frameObjIdx].Item1 << idx;
-                idx += level.xBit;
-                s |= (number)state.frames[frameObjIdx].Item2 << idx;    
-                idx += level.yBit;
-            }
+            s |= (number)(state.frames[frameObjIdx].Item1 + level.width * state.frames[frameObjIdx].Item2) << idx;
+            idx += level.posBit;
         }
 
-#if UseBirdSymmetry
-        foreach(var ls in state.birds.Where(bird => bird != null).OrderBy(bird => bird[0]).ThenBy(bird => bird[1])){
-            SerializeBird(ref s, ref idx, ls);
+        foreach(var bird in state.birds.Where(bird => bird.pos != NullPos).OrderBy(bird => bird.pos.Item1).ThenBy(bird => bird.pos.Item2)){
+            // The first `posBit` bits are the position of the bird
+            s |= (number)(bird.pos.Item1 + bird.pos.Item2 * level.width) << idx;
+            idx += level.posBit;
+            s |= (number)bird.shapeKey << idx;
+            idx += shapeKeyLength;
         }
-#else
-        for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++)
-        {
-            if (state.birds[birdIdx] == null)
-            {
-                s |= (((number)1 << (level.xBit + level.yBit)) - 1) << idx;
-                idx += (level.xBit + level.yBit);
-            }
-            else
-                SerializeBird(ref s, ref idx, orderedList[birdIdx]);
-        }
-#endif
         return s;
     }
-    private void SerializeBird(ref number s, ref int idx, List<int> bird){
-        // The first `posBit` bits are the position of the bird
-        s |= (number)bird[0] << idx;
-        idx += level.xBit;
-        s |= (number)bird[1] << idx;
-        idx += level.yBit;
-        
-        // Every 2 bits in the middle are the directions of the bird
-        foreach(int dir in bird.Skip(2)){
-            s |= (number)dir << idx;
-            idx += 2;
-        }
-
-        // Inversed 2 bits denotes the end of the bird, assert the bird length is not 1
-        s |= ((s >> (idx - 2)) ^ (number)1) << idx;
-        idx += 2;
-    }
-#if !UseBirdSymmetry
-    private State Deserialize(number key){
-        var state = new State {
-            birds = new(),
-            frames = new(),
-            fruitFreshFlag = (uint)key & ((1U << level.fruitCount) - 1)
-        };
-
-        int idx = level.fruitCount;
-        for(int frameObjIdx = 0; frameObjIdx < level.frameCount; frameObjIdx++){
-            int x = (int)(key >> idx) & ((1 << level.xBit) - 1);
-            idx += level.xBit;
-            int y = (int)(key >> idx) & ((1 << level.yBit) - 1);
-            idx += level.yBit;
-            state.frames.Add(x == ((1 << level.xBit) - 1) && y == ((1 << level.yBit) - 1) ? NullPos : (x, y));
-        }
-
-        for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
-            int x = (int)(key >> idx) & ((1 << level.xBit) - 1);
-            idx += level.xBit;
-            int y = (int)(key >> idx) & ((1 << level.yBit) - 1);
-            idx += level.yBit;
-            if (x == ((1 << level.xBit) - 1) && y == ((1 << level.yBit) - 1)){
-                state.birds.Add(null);
-                continue;
-            }
-            var bird = new List<int>{x, y};
-            int lastDir = -1;
-            while(true){
-                int dir = (int)(key >> idx) & 3;
-                idx += 2;
-                if (dir == (lastDir ^ 1)) break;
-                lastDir = dir;
-                bird.Add(dir);
-            }
-            state.birds.Add(bird);
-        }
-        return state;
-    }
-#endif
-#endregion
+    
 
 #region Heuristic
     private static int Distance(int2 a, int2 b){
@@ -271,8 +183,8 @@ public class Solver{
             Enumerable.Range(0, level.fruitCount)
                 .Where(fruitIdx => (state.fruitFreshFlag & (1U << fruitIdx)) != 0)
                 .Select(fruitIdx => state.birds
-                    .Where(bird => bird != null)
-                    .Select(bird => distFunc(bird.Head2(), level.fruitPos[fruitIdx]))
+                    .Where(bird => bird.pos != NullPos)
+                    .Select(bird => distFunc(bird.pos, level.fruitPos[fruitIdx]))
                     .Min())
                 .Sum();
         h += fruitCost * hueristic.fruitMinDistToBirdWeight;
@@ -286,21 +198,17 @@ public class Solver{
 
         // Ignore if all frames are in target
         int birdFollowingFrameCost = hueristic.birdFollowingFrameWeight == 0 || frameTargetCost == 0 ? 0 :
-            state.birds.Where(bird => bird != null)
-                .Select(bird => state.frames
+            state.birds.Where(bird => bird.pos != NullPos)
+                .Sum(bird => state.frames
                     .Where(frame => frame != NullPos)
-                    .Select(frame => Distance(frame, bird.Head2())) // Should not use NonSymmetricDistance here
-                    .Min())
-                .Sum();
+                    .Min(frame => distFunc(frame, bird.pos)));
         h += birdFollowingFrameCost * hueristic.birdFollowingFrameWeight;
 
         // Ignore if there is remaining fruits or frames
         int birdToTargCost = hueristic.extraPreparingCost != 0 && (fruitCost != 0 || frameTargetCost != 0) ? 
             hueristic.extraPreparingCost :
-            Enumerable.Range(0, level.birdCount)
-                .Where(birdIdx => state.birds[birdIdx] != null)
-                .Select(birdIdx => distFunc(state.birds[birdIdx].Head2(), level.target))
-                .Sum() * hueristic.birdToTargWeight;
+            state.birds.Where(bird => bird.pos != NullPos)
+                .Sum(bird => distFunc(bird.pos, level.target)) * hueristic.birdToTargWeight;
         h += birdToTargCost;
 
         return h;
@@ -313,8 +221,7 @@ public class Solver{
         moveList[idx] = true;
         foreach(int2 pos in GetParts(state, idx)){
             int2 nextPos = Move(pos, dir);
-            if (nextPos.Item1 < 0 || nextPos.Item1 >= level.width ||
-                nextPos.Item2 < 0 || nextPos.Item2 >= level.height) return false;
+            if (OutOfBound(nextPos)) return false;
             int obj = map[nextPos.Item1, nextPos.Item2];
             if(obj >= Level.OBJECT_BASE){
                 if(!moveList[obj - Level.OBJECT_BASE] &&
@@ -330,7 +237,7 @@ public class Solver{
         return true;
     }
     private bool TestSnakeMove(int[,] map, State state, int idx, int dir, bool[] moveList){
-        var nextPos = Move(state.birds[idx].Head2(), dir);
+        var nextPos = Move(state.birds[idx].pos, dir);
         Array.Fill(moveList, false);
         if (map[nextPos.Item1, nextPos.Item2] >= Level.OBJECT_BASE){
             return RecursiveTest(map, state, map[nextPos.Item1, nextPos.Item2] - Level.OBJECT_BASE, dir, moveList) && !moveList[idx];
@@ -358,57 +265,61 @@ public class Solver{
         }
         return true;
     }
+    private int FindShapeIndex(ints shape){
+        for(int i = 0; i < birdShapeCache.Count; i++){
+            if(Enumerable.SequenceEqual(birdShapeCache[i], shape)){
+                return i;
+            }
+        }
+        birdShapeCache.Add(shape.ToArray());
+        if (birdShapeCache.Count > (1 << shapeKeyLength))
+            throw new Exception("Shape Key Overflow");
+        shapeKeyMap.Add(new int[level.fruitCount == 0 ? 4 : 8]);
+        Array.Fill(shapeKeyMap.Last(), SHAPE_NOT_COMPUTED);
+        shapeKeyMap.Last()[shape[0]] = SHAPE_ILLEGAL;
+        return birdShapeCache.Count - 1;
+    }
+    private int NextShape(int shape, int dir, bool eatFruit){
+        int nextShape = shapeKeyMap[shape][dir | (eatFruit ? 4 : 0)];
+        if(nextShape != SHAPE_NOT_COMPUTED) return nextShape;
+        // Calculate new shape
+        ints shapeDetail = birdShapeCache[shape].ToList();
+        if(!eatFruit)
+            shapeDetail.RemoveAt(shapeDetail.Count - 1);
+        shapeDetail.Insert(0, dir ^ 1);
+        nextShape = FindShapeIndex(shapeDetail);
+        return shapeKeyMap[shape][dir | (eatFruit ? 4 : 0)] = nextShape;
+    }
     private bool ApplyMove(int[,] map, State state, int idx, int dir, bool snakeMove, bool[] moveList){
         if(snakeMove){
             // If the bird falls out, report illegal
-            int2 nextPos = Move(state.birds[idx].Head2(), dir);
+            int2 nextPos = Move(state.birds[idx].pos, dir);
             if (OutOfBound(nextPos))
                 return false;
-            // Strech head
-            state.birds[idx][0] = nextPos.Item1;
-            state.birds[idx][1] = nextPos.Item2;
-            state.birds[idx].Insert(2, dir ^ 1);
-            // Test Fruit
-            int occupiedObj = map[state.birds[idx][0], state.birds[idx][1]];
-            if(occupiedObj is >= Level.FRUIT_BASE and < Level.OBJECT_BASE){ // Eat fruit, do not shrink tail
-                state.fruitFreshFlag &= ~(1U << (occupiedObj - Level.FRUIT_BASE));
-            }
-            else{ // Shrink tail
-                int2 tailPos = state.birds[idx].GetBirdPos().Last();
-                map[tailPos.Item1, tailPos.Item2] = Level.EMPTY;
-                state.birds[idx].RemoveAt(state.birds[idx].Count - 1);
-            }
+            bool eatFruit = map.Get(nextPos) is >= Level.FRUIT_BASE and < Level.OBJECT_BASE;
+            if(eatFruit)
+                state.fruitFreshFlag &= ~(1U << (map.Get(nextPos) - Level.FRUIT_BASE));
+            state.birds[idx].pos = nextPos;
+            state.birds[idx].shapeKey = NextShape(state.birds[idx].shapeKey, dir, eatFruit);
+            
             // Test Portal
             if (level.portalPos != null && level.portalPos.Contains(nextPos)){
                 int portalIdx = level.portalPos.IndexOf(nextPos);
-                state.birds[idx][0] += level.portalPos[portalIdx ^ 1].Item1 - level.portalPos[portalIdx].Item1;
-                state.birds[idx][1] += level.portalPos[portalIdx ^ 1].Item2 - level.portalPos[portalIdx].Item2;
+                int2 deltaPos = level.portalPos[portalIdx ^ 1].Sub(level.portalPos[portalIdx]);
+                state.birds[idx].pos = state.birds[idx].pos.Add(deltaPos);
             }
             // If the bird reaches target, remove it
-            if (state.fruitFreshFlag == 0 && state.birds[idx].Head2() == level.target)
-            {
-                foreach(int2 pos in state.birds[idx].GetBirdPos())
-                    map[pos.Item1, pos.Item2] = Level.EMPTY;
-                state.birds[idx] = null;
-            }
+            if (state.fruitFreshFlag == 0 && state.birds[idx].pos == level.target)
+                state.birds[idx].pos = NullPos;
         }
         for (int objIdx = 0; objIdx < level.objectCount; objIdx++){
             if(moveList[objIdx]){
-                // Remove old pos in map
-                foreach(int2 pos in GetParts(state, objIdx)){
-                    map[pos.Item1, pos.Item2] = Level.EMPTY;
-                }
                 // Move to new pos
                 if(objIdx < level.birdCount){
-                    switch(dir){
-                        case 0: state.birds[objIdx][0]++; break;
-                        case 1: state.birds[objIdx][0]--; break;
-                        case 2: state.birds[objIdx][1]++; break;
-                        case 3: state.birds[objIdx][1]--; break;
-                    }
+                    state.birds[objIdx].pos = Move(state.birds[objIdx].pos, dir);
                     // Check target
-                    if (state.birds[objIdx].Head2() == level.target) {
-                        state.birds[objIdx] = null;
+                    if (state.birds[objIdx].pos == level.target) {
+                        state.birds[objIdx].pos = NullPos;
                         continue;
                     }
                 }
@@ -435,8 +346,8 @@ public class Solver{
                     if(level.portalPos != null && portalIdx == -1 && level.portalPos.Contains(pos)){
                         portalIdx = level.portalPos[0] == pos ? 0 : 1;
                         if(objIdx < level.birdCount){
-                            state.birds[objIdx][0] += level.portalPos[portalIdx ^ 1].Item1 - level.portalPos[portalIdx].Item1;
-                            state.birds[objIdx][1] += level.portalPos[portalIdx ^ 1].Item2 - level.portalPos[portalIdx].Item2;
+                            state.birds[objIdx].pos.Item1 += level.portalPos[portalIdx ^ 1].Item1 - level.portalPos[portalIdx].Item1;
+                            state.birds[objIdx].pos.Item2 += level.portalPos[portalIdx ^ 1].Item2 - level.portalPos[portalIdx].Item2;
                         }
                         else{
                             state.frames[objIdx - level.birdCount] = (
@@ -449,38 +360,37 @@ public class Solver{
             }
         }
         // Update map
-        for (int objIdx = 0; objIdx < level.objectCount; objIdx++){
-            if((moveList[objIdx] || snakeMove && objIdx == idx) && IsValid(state, objIdx)){
-                foreach(int2 pos in GetParts(state, objIdx))
-                    map[pos.Item1, pos.Item2] = objIdx | Level.OBJECT_BASE;
-            }
-        }
+        CopyStateToMap(state, map);
         return true;
     }
 #endregion
 
     public void Solve(State initState){
+        NullPos = (((1 << level.posBit) - 1, 0));
+        for (int i = 0; i < initState.birds.Count; i++)
+            initState.birds[i].shapeKey = FindShapeIndex(level.birdShapes[i]);
         var initStateSerial = Serialize(initState);
+
         int[,] map = new int[level.width, level.height];
-        var route = new Dictionary<number, number>();
-        var queue = new PriorityQueue<State, int>();
-        queue.Enqueue(initState, Hueristic(initState));
         CopyStateToMap(initState, map);
         PrintMap(map);
 
+        var route = new Dictionary<number, number>();
+        var queue = new PriorityQueue<State, int>();
+        queue.Enqueue(initState, Hueristic(initState));
         bool[] moveList = new bool[level.objectCount], activeList = new bool[level.objectCount];
         while(queue.Count > 0){
             var oldState = queue.Dequeue();
             var oldStateSerial = Serialize(oldState);
             for(int birdIdx = 0; birdIdx < level.birdCount; birdIdx++){
-                if (oldState.birds[birdIdx] == null) continue;
+                if (oldState.birds[birdIdx].pos == NullPos) continue;
                 for (int dir = 0; dir < 4; dir++){
-                    int2 nextPos = Move(oldState.birds[birdIdx].Head2(), dir);
+                    int2 nextPos = Move(oldState.birds[birdIdx].pos, dir);
 
                     // Pre-test illegal move
                     if(OutOfBound(nextPos) ||
                         level.initMap[nextPos.Item1, nextPos.Item2] is Level.WALL or Level.SPIKE ||
-                        dir == oldState.birds[birdIdx][2]){ // assert bird length >= 2
+                        shapeKeyMap[oldState.birds[birdIdx].shapeKey][dir] == SHAPE_ILLEGAL){
                         continue;
                     }
                     CopyStateToMap(oldState, map);
@@ -490,7 +400,7 @@ public class Solver{
 
                     // Push
                     var newState = new State{
-                        birds = oldState.birds.Select(ls => ls == null ? null : ls.ToList()).ToList(),
+                        birds = oldState.birds.Select(bird => new State.Bird{ pos = bird.pos, shapeKey = bird.shapeKey }).ToList(),
                         frames = oldState.frames.ToList(),
                         fruitFreshFlag = oldState.fruitFreshFlag,
                         step = oldState.step + 1,
@@ -516,34 +426,20 @@ public class Solver{
                     }
                     
                     // Reduce memory
-                    for(int i = 0; i < level.birdCount; i++)
-                        if(newState.birds[i] != null && Enumerable.SequenceEqual(newState.birds[i], oldState.birds[i]))
-                            newState.birds[i] = oldState.birds[i];
                     if(Enumerable.SequenceEqual(newState.frames, oldState.frames))
                         newState.frames = oldState.frames;
 
                     // Check if the level is solved
-                    if (newState.birds.All(ls => ls == null)){
+                    if (newState.birds.All(bird => bird.pos == NullPos)){
                         // print solution
                         Console.WriteLine();
                         var ls = new Stack<int2>();
                         ls.Push((birdIdx, dir));
-#if PrintRoute
-                            Console.WriteLine($"\nBefore [{idx+1}{DIRECTIONS[dir]}]:");
-                            CopyStateToMap(map, oldState);
-                            Console.WriteLine(PrintMap(map));
-#endif
                         number key = oldStateSerial;
                         while(initStateSerial != key){
                             number value = route[key];
                             ls.Push(((int)((value >> 2) & 3), (int)(value & 3)));
                             key = value >> 4;
-#if PrintRoute
-                            Console.WriteLine($"\nBefore [{ls.Peek().Item1 + 1}{DIRECTIONS[ls.Peek().Item2]}]:");
-                            newState.Deserialize(level, initState, key);
-                            CopyStateToMap(map, newState);
-                            Console.WriteLine(PrintMap(map));
-#endif
                         }
                         Console.Write("Solution = ");
                         var sb = new StringBuilder();
@@ -563,10 +459,8 @@ public class Solver{
                     else{
                         // save to queue
                         var newStateSerial = Serialize(newState);
-                        if(!route.ContainsKey(newStateSerial)){
-                            route.Add(newStateSerial, oldStateSerial << 4 | (number)(birdIdx << 2 | dir));
+                        if(route.TryAdd(newStateSerial, oldStateSerial << 4 | (number)(birdIdx << 2 | dir))) {
                             queue.Enqueue(newState, Hueristic(newState));
-                            
 #if CheckIntermediate
                             if(route.Count % 100000 == 0){
                                 PrintMap(map);
@@ -583,11 +477,28 @@ public class Solver{
     }
 
 #region Tools
-    private static readonly int2 NullPos = (-9999, -9999);
-    private bool IsValid(State state, int objIdx) => objIdx < level.birdCount ? state.birds[objIdx] != null :
-        state.frames[objIdx - level.birdCount] != NullPos;
-    private IEnumerable<int2> GetParts(State state, int objIdx) => objIdx < level.birdCount ? state.birds[objIdx].GetBirdPos() :
-        state.frames[objIdx - level.birdCount].GetFramePos(level.frameShapes[objIdx - level.birdCount]);
+    private static int2 NullPos;
+    private bool IsValid(State state, int objIdx) => (objIdx < level.birdCount ? state.birds[objIdx].pos :
+        state.frames[objIdx - level.birdCount]) != NullPos;
+    private IEnumerable<int2> GetParts(State state, int objIdx) => objIdx < level.birdCount ? GetBirdPos(state.birds[objIdx]) :
+        GetFramePos(state.frames[objIdx - level.birdCount], level.frameShapes[objIdx - level.birdCount]);
+    public static IEnumerable<int2> GetFramePos(int2 head, int2s shape){
+        foreach (var pos in shape)
+            yield return (head.Item1 + pos.Item1, head.Item2 + pos.Item2);
+    }
+    public IEnumerable<int2> GetBirdPos(State.Bird bird){
+        int2 head = bird.pos;
+        yield return head;
+        foreach(var i in birdShapeCache[bird.shapeKey]){
+            switch(i){
+                case 0: head.Item1++; break;
+                case 1: head.Item1--; break;
+                case 2: head.Item2++; break;
+                case 3: head.Item2--; break;
+            }
+            yield return head;
+        }
+    }
     private static int2 Move(int2 pos, int dir){
         return (pos.Item1 + (dir == 0 ? 1 : dir == 1 ? -1 : 0), pos.Item2 + (dir == 2 ? 1 : dir == 3 ? -1 : 0));
     }
