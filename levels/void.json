@@ -1,0 +1,44 @@
+{
+    "hueristic":{
+        "useNonSymDistance": false,
+        "stepWeight": 3,
+        "birdWeight": 4,
+        "birdFollowingFrameWeight": 5,
+        "fruitWeight": 20,
+        "frameWeight": 10,
+        "frameTargets": [3, -4],
+        "extraCost": 1000
+    },
+    "preferredDirections": "RUDL",
+    "range":[
+        -8, 6, -6, 5
+    ],
+    "target":[
+        5, -3
+    ],
+    "birds":[
+        [-5, 0, 3],
+        [-4, 0, 1],
+        [-5, 1, 1]
+    ],
+    "frames":[
+        [-5, 2]
+    ],
+    "walls":[
+        9999, -6, -3, -3, -1,
+        9999, -3, -3, 3, 5,
+        9999, -1, -1, 3, 5,
+        -2, 5,
+        3, -6
+    ],
+    "spikes":[
+        -2, -1,
+        3, -5
+    ],
+    "fruits":[
+        -2, 3,
+        -2, 4,
+        2, 4
+    ],
+    "portals":[]
+}
