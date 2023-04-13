@@ -12,7 +12,7 @@ All the star levels can be solved in seconds ~~if the heuristic parameters are p
 + Fill in the level definitions and heuristic parameters in `level.json`. To describe a level, you should:
   + First, choose a square as the origin (0, 0);
   + The value of `range` is a 4-length int array that defines the coordinate range `x_min`, `x_max`, `y_min`, `y_max`;
-  + The value of `birds` is an array of birds, each bird is again an int array that the first two elements are the coordinates of the bird head, and the rest elements define the direction of its body (0: right, 1: left, 2: up, 3: down) from head to tail;
+  + The value of `birds` is an array of birds, each bird is again an int array that the first two elements are the coordinates of the bird head, and the rest elements define the direction of its body (0: up, 1: right, 2: down, 3: left) from head to tail;
   + The value of `target` is a 2-length int array that defines the coordinates of the target;
   + The value of `frames` is an array of iron frames, each frame is again an int array that the first two elements are the coordinates of the frame center, then every 2 elements define the relative coordinate of one of its body to the center;
   + The value of `fruits` is an int array, every 2 elements define a fruit's coordinate;
@@ -24,7 +24,7 @@ All the star levels can be solved in seconds ~~if the heuristic parameters are p
 
 ## About the heuristic parameters
 
-This part is quite important and tricky, here I just give some tips:
+This part is quite sensitive and tricky, here I just give some tips:
 
 + `useNonSymDistance`: likely to work better on levels with a high target;
 + `frameTargets`: an int array that every 2 elements define the target position of a frame where you think it should be when winning;
@@ -43,3 +43,4 @@ In `SnakebirdSolver.csproj`, you can add the following options into `DefineConst
 + The level star-4 can be solved much faster if custom pruning is added (i.e. disallowing iron frames to touch the ground), but it's hard to write the pruning rules in json file;
 + Possible future work: store positions in cache just like shape;
 + You may need to manually select a larger value for `shapeKeyLength` is the error `Shape Key Overflow` or `Too many bits used` occurs;
++ Great thanks to github copilot, without which I may never write this readme file.
