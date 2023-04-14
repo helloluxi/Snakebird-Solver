@@ -19,7 +19,7 @@ All the star levels can be solved in seconds ~~if the heuristic parameters are p
   + The value of `walls` and `spikes` are similar to `fruits`, but if a magic number 9999 occurs, then the following 4 elements define a rectangle of walls or spikes by `x_min`, `x_max`, `y_min`, `y_max`;
   + The value of `portals` is either an empty array or an array of 4-length int arrays, every 2 elements define a portal's coordinate;
   + The value of `heuristic` is a structure that defines the heuristic parameters, which is sensitive and may require efforts to adjust;
-+ Run `dotnet run` to solve the level defined in `levels.json`, or run `dotnet run <level_file>` to solve the level defined in `<level_file>`;
++ Run `dotnet run` to solve the level defined in `level.json`, or run `dotnet run <level_file>` to solve the level defined in `<level_file>`;
 + The output looks like `Solution = [1]UR [2]LD ...`, which means the first bird should go up and then right, then the second bird should go left and then down, and so on.
 
 ## About the heuristic parameters
@@ -35,12 +35,12 @@ This part is quite sensitive and tricky, here I just give some tips:
 
 In `SnakebirdSolver.csproj`, you can add the following options into `DefineConstants`:
 
-+ `UseBigInt`: Use 128-bit integer instead of 64-bit integer to store a state, which is ~~usually~~ unnecessary;
++ `UseBigInt`: Use 128-bit integer instead of 64-bit integer to store a state, which is useless by now;
 + `CheckIntermediate`: Print the intermediate states every 100000 searches, which is useful for adjusting the heuristic parameters by observing the search process;
 
 ## Notes
 
++ Great thanks to github copilot, without which I may never write this readme file.
 + The level star-4 can be solved much faster if custom pruning is added (i.e. disallowing iron frames to touch the ground), but it's hard to write the pruning rules in json file;
 + Possible future work: store positions in cache just like shape;
 + You may need to manually select a larger value for `shapeKeyLength` is the error `Shape Key Overflow` or `Too many bits used` occurs;
-+ Great thanks to github copilot, without which I may never write this readme file.
